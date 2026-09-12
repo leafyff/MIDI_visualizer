@@ -1,7 +1,18 @@
-"""General MIDI program / drum names and instrument family classification."""
+"""General MIDI instrument names and families.
 
+A MIDI file does not contain any sound, only a *program number* from 0 to 127
+saying which instrument to use. The General MIDI standard fixes what each number
+means, so 0 is always a grand piano and 40 always a violin.
+
+This module turns those numbers into names for the labels in the video, and into
+family names that tell the synthesizer roughly what the instrument should sound
+like.
+"""
+
+#: The 128 General MIDI instrument names, in order. Index = program number.
 GM_PROGRAMS = [
-    "Acoustic Grand Piano", "Bright Acoustic Piano", "Electric Grand Piano", "Honky-tonk Piano",
+    "Acoustic Grand Piano", "Bright Acoustic Piano",
+    "Electric Grand Piano", "Honky-tonk Piano",
     "Electric Piano 1", "Electric Piano 2", "Harpsichord", "Clavinet",
     "Celesta", "Glockenspiel", "Music Box", "Vibraphone",
     "Marimba", "Xylophone", "Tubular Bells", "Dulcimer",
@@ -36,35 +47,48 @@ GM_PROGRAMS = [
     "Telephone Ring", "Helicopter", "Applause", "Gunshot",
 ]
 
-# Family name per 8-program block, used by the synth and for colouring.
+#: General MIDI groups its instruments into sixteen blocks of eight, and each
+#: block holds instruments that sound broadly alike. One name per block, so the
+#: synthesizer needs sixteen tones rather than a hundred and twenty-eight.
 FAMILIES = [
     "piano", "chromatic", "organ", "guitar", "bass", "strings", "ensemble", "brass",
     "reed", "pipe", "lead", "pad", "fx", "ethnic", "percussive", "sfx",
 ]
 
-GM_DRUMS = {
-    35: "Acoustic Bass Drum", 36: "Bass Drum 1", 37: "Side Stick", 38: "Acoustic Snare",
-    39: "Hand Clap", 40: "Electric Snare", 41: "Low Floor Tom", 42: "Closed Hi-Hat",
-    43: "High Floor Tom", 44: "Pedal Hi-Hat", 45: "Low Tom", 46: "Open Hi-Hat",
-    47: "Low-Mid Tom", 48: "Hi-Mid Tom", 49: "Crash Cymbal 1", 50: "High Tom",
-    51: "Ride Cymbal 1", 52: "Chinese Cymbal", 53: "Ride Bell", 54: "Tambourine",
-    55: "Splash Cymbal", 56: "Cowbell", 57: "Crash Cymbal 2", 58: "Vibraslap",
-    59: "Ride Cymbal 2", 60: "Hi Bongo", 61: "Low Bongo", 62: "Mute Hi Conga",
-    63: "Open Hi Conga", 64: "Low Conga", 65: "High Timbale", 66: "Low Timbale",
-    67: "High Agogo", 68: "Low Agogo", 69: "Cabasa", 70: "Maracas",
-    71: "Short Whistle", 72: "Long Whistle", 73: "Short Guiro", 74: "Long Guiro",
-    75: "Claves", 76: "Hi Wood Block", 77: "Low Wood Block", 78: "Mute Cuica",
-    79: "Open Cuica", 80: "Mute Triangle", 81: "Open Triangle",
-}
-
 
 def program_name(program: int, is_drum: bool = False) -> str:
+    """Return the instrument name for a General MIDI program number.
+
+    Args:
+        program: the program number; values outside 0-127 are clamped.
+        is_drum: True for the percussion channel, where the program number
+            does not select an instrument at all.
+    """
     if is_drum:
         return "Drum Kit"
     return GM_PROGRAMS[max(0, min(127, int(program)))]
 
 
+#: A few instruments sit in a block of eight that misrepresents them, because
+#: General MIDI had to put them somewhere. Pizzicato strings and the harp are
+#: plucked rather than bowed, and a timpani is a drum -- yet all three are
+#: filed under "strings". Overriding them makes the synth sound much closer.
+_FAMILY_OVERRIDES = {
+    45: "ethnic",       # Pizzicato Strings -- plucked, short decay
+    46: "ethnic",       # Orchestral Harp -- likewise
+    47: "percussive",   # Timpani -- a struck drum
+}
+
+
 def family_of(program: int, is_drum: bool = False) -> str:
+    """Return the instrument family for a program number, e.g. ``"bass"``.
+
+    The synthesizer looks the result up in ``synth.FAMILY_TIMBRE`` to decide how
+    the instrument should sound.
+    """
     if is_drum:
         return "drums"
-    return FAMILIES[max(0, min(127, int(program))) // 8]
+    program = max(0, min(127, int(program)))
+    if program in _FAMILY_OVERRIDES:
+        return _FAMILY_OVERRIDES[program]
+    return FAMILIES[program // 8]
