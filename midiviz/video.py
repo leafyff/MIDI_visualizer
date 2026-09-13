@@ -6,11 +6,12 @@ through its standard input as we paint them, and the WAV file of synthesized
 audio. It combines ("muxes") them into one MP4.
 
 Sending frames as we go means the whole video never has to fit in memory: a
-three minute 1080p video would be about 45 GB uncompressed.
+three-minute 1080p video would be about 45 GB uncompressed.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -91,9 +92,7 @@ def image_bytes(image: QImage) -> bytes:
     expects rows packed tightly together.
     """
     width, height = image.width(), image.height()
-    pointer = image.constBits()
-    pointer.setsize(image.sizeInBytes())
-    raw = bytes(pointer)
+    raw = image.constBits().asstring(image.sizeInBytes())
 
     row_bytes = image.bytesPerLine()
     if row_bytes == width * 4:
@@ -131,6 +130,27 @@ def _build_command(ffmpeg: str, audio_wav: str, out_path: str, fps: int,
     ]
 
 
+def _write_frames(process: subprocess.Popen, renderer, n_frames: int,
+                  progress, cancel) -> bool:
+    """Paint each frame and hand it to ffmpeg through its standard input.
+
+    Returns:
+        True if ``cancel`` asked to stop. False once every frame has been sent,
+        or as soon as ffmpeg quits early -- its exit code then says what failed.
+    """
+    for frame in range(n_frames):
+        if cancel is not None and cancel():
+            return True
+        pixels = image_bytes(renderer.render(frame))
+        try:
+            process.stdin.write(pixels)
+        except OSError:
+            return False         # the pipe is broken: ffmpeg has already exited
+        if progress is not None and (frame % 5 == 0 or frame == n_frames - 1):
+            progress(frame / max(1, n_frames))
+    return False
+
+
 def encode_video(renderer, audio_wav: str, out_path: str, fps: int, n_frames: int,
                  width: int, height: int, quality: str = "high",
                  progress=None, cancel=None) -> str:
@@ -142,7 +162,8 @@ def encode_video(renderer, audio_wav: str, out_path: str, fps: int, n_frames: in
         out_path: where to write the MP4.
         fps: frames per second.
         n_frames: how many frames to render.
-        width, height: frame size in pixels; must match what the renderer paints.
+        width: frame width in pixels; must match what the renderer paints.
+        height: frame height in pixels; must match what the renderer paints.
         quality: one of ``"high"``, ``"balanced"`` or ``"fast"``.
         progress: optional callback taking a float from 0.0 to 1.0.
         cancel: optional callback returning True to stop early.
@@ -161,52 +182,33 @@ def encode_video(renderer, audio_wav: str, out_path: str, fps: int, n_frames: in
     # ffmpeg's messages go to a temporary file rather than a pipe. Reading a
     # pipe would mean draining it while we write frames, and if we did not, a
     # chatty ffmpeg could fill the pipe's buffer and deadlock both programs.
-    errors = tempfile.TemporaryFile()
-    try:
-        process = subprocess.Popen(command, stdin=subprocess.PIPE,
-                                   stdout=subprocess.DEVNULL, stderr=errors,
-                                   **_hidden_process_flags())
-    except OSError as exc:
-        errors.close()
-        raise FFmpegMissing(f"{FFMPEG_HINT}\n\n({exc})") from exc
-
-    was_cancelled = False
-    try:
-        for frame in range(n_frames):
-            if cancel is not None and cancel():
-                was_cancelled = True
-                break
-            try:
-                process.stdin.write(image_bytes(renderer.render(frame)))
-            except (BrokenPipeError, OSError):
-                break            # ffmpeg exited early; its error is read below
-            if progress is not None and (frame % 5 == 0 or frame == n_frames - 1):
-                progress(frame / max(1, n_frames))
-    finally:
-        # Closing ffmpeg's input tells it there are no more frames, so it can
-        # finish writing the file. This must happen even if we are bailing out.
+    with tempfile.TemporaryFile() as errors:
         try:
-            if process.stdin:
+            process = subprocess.Popen(command, stdin=subprocess.PIPE,
+                                       stdout=subprocess.DEVNULL, stderr=errors,
+                                       **_hidden_process_flags())
+        except OSError as exc:
+            raise FFmpegMissing(f"{FFMPEG_HINT}\n\n({exc})") from exc
+
+        try:
+            cancelled = _write_frames(process, renderer, n_frames, progress, cancel)
+        finally:
+            # Closing ffmpeg's input tells it there are no more frames, so it can
+            # finish writing the file. This must happen even if we are bailing out.
+            with contextlib.suppress(OSError):      # it may have exited already
                 process.stdin.close()
-        except OSError:
-            pass
-        exit_code = process.wait()
+            exit_code = process.wait()
 
-        errors.seek(0)
-        message = errors.read().decode("utf-8", "replace").strip()
-        errors.close()
+        if cancelled:
+            with contextlib.suppress(OSError):
+                os.remove(out_path)                 # a half-written video is no use
+            raise KeyboardInterrupt("Rendering cancelled")
 
-    if was_cancelled:
-        if os.path.exists(out_path):
-            try:
-                os.remove(out_path)      # a half-written video is no use
-            except OSError:
-                pass
-        raise KeyboardInterrupt("Rendering cancelled")
-
-    if exit_code != 0 or not os.path.exists(out_path):
-        tail = "\n".join(message.splitlines()[-12:])
-        raise RuntimeError(f"ffmpeg failed (exit {exit_code}).\n{tail}")
+        if exit_code != 0 or not os.path.exists(out_path):
+            errors.seek(0)
+            message = errors.read().decode("utf-8", "replace").strip()
+            tail = "\n".join(message.splitlines()[-12:])
+            raise RuntimeError(f"ffmpeg failed (exit {exit_code}).\n{tail}")
 
     if progress is not None:
         progress(1.0)

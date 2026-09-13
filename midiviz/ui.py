@@ -14,14 +14,16 @@ thread reports back with *signals*, which Qt delivers safely to the window.
 
 from __future__ import annotations
 
+import math
 import os
 import threading
+from typing import TypeVar
 
 from PyQt6.QtCore import (QElapsedTimer, QPointF, QRectF, QSize, Qt, QThread,
                           QTimer, QUrl, pyqtSignal)
 from PyQt6.QtGui import (QColor, QFont, QIcon, QImage, QPainter, QPen, QPixmap,
                          QPolygonF)
-from PyQt6.QtMultimedia import QAudio, QAudioOutput, QMediaPlayer
+from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QFrame,
                              QHBoxLayout, QLabel, QMainWindow, QMessageBox,
@@ -124,6 +126,21 @@ QProgressBar::chunk { background: #4d7cff; border-radius: 4px; }
 
 QFrame#stage { background: #06070c; border: 1px solid #1c2130; border-radius: 10px; }
 """
+
+_WidgetT = TypeVar("_WidgetT", bound=QWidget)
+
+
+def _named(widget: _WidgetT, name: str) -> _WidgetT:
+    """Set a widget's object name: the ``#name`` that :data:`STYLE` refers to it by.
+
+    PyQt also accepts ``objectName=`` as a constructor argument, but its type
+    stubs do not declare it, so editors flag every such call as an error.
+
+    Returns:
+        ``widget`` itself, so it can be created and named in one expression.
+    """
+    widget.setObjectName(name)
+    return widget
 
 
 def _chevron_path() -> str:
@@ -308,7 +325,7 @@ class PreviewCanvas(QWidget):
     """Shows one rendered frame, scaled to fit with black bars at the sides."""
 
     #: Emitted when the canvas is clicked, so clicking the picture plays it.
-    clicked = pyqtSignal()
+    clicked: pyqtSignal = pyqtSignal()
 
     def __init__(self, parent=None):
         """Create an empty canvas; call :meth:`set_image` to give it a frame."""
@@ -365,12 +382,12 @@ class RenderWorker(QThread):
     """
 
     #: Progress so far (0.0-1.0) and the name of the current step.
-    progressed = pyqtSignal(float, str)
+    progressed: pyqtSignal = pyqtSignal(float, str)
     #: The finished video's path.
-    finished_ok = pyqtSignal(str)
+    finished_ok: pyqtSignal = pyqtSignal(str)
     #: A problem, as ``(kind, message)`` where kind is
     #: ``"cancelled"``, ``"ffmpeg"`` or ``"error"``.
-    failed = pyqtSignal(str, str)
+    failed: pyqtSignal = pyqtSignal(str, str)
 
     def __init__(self, midi_path: str, out_path: str,
                  settings: RenderSettings, audio_wav: str | None = None,
@@ -427,9 +444,9 @@ class AudioPreparer(QThread):
     """
 
     #: Path of the finished WAV file.
-    ready = pyqtSignal(str)
+    ready: pyqtSignal = pyqtSignal(str)
     #: Something went wrong; the preview stays silent.
-    failed = pyqtSignal(str)
+    failed: pyqtSignal = pyqtSignal(str)
 
     def __init__(self, score, reverb: float, parent=None):
         """
@@ -556,7 +573,7 @@ class MainWindow(QMainWindow):
         self._playing = False
         self._resume_after_scrub = False
         self._clock = QElapsedTimer()  # measures real time between frames
-        self._timer = QTimer(self)
+        self._timer: QTimer = QTimer(self)
         self._timer.setInterval(1000 // PREVIEW_FPS)
         self._timer.timeout.connect(self._advance_preview)
 
@@ -570,7 +587,7 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         """Create every widget and arrange it. Called once, from ``__init__``."""
-        root = QWidget(objectName="root")
+        root = _named(QWidget(), "root")
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
         outer.setContentsMargins(22, 18, 22, 18)
@@ -578,9 +595,9 @@ class MainWindow(QMainWindow):
 
         heading = QVBoxLayout()
         heading.setSpacing(2)
-        heading.addWidget(QLabel("MIDI Visualizer", objectName="title"))
-        heading.addWidget(QLabel("Pick a MIDI file and turn it into a video.",
-                                 objectName="subtitle"))
+        heading.addWidget(_named(QLabel("MIDI Visualizer"), "title"))
+        heading.addWidget(_named(QLabel("Pick a MIDI file and turn it into a video."),
+                                 "subtitle"))
         outer.addLayout(heading)
 
         outer.addWidget(self._build_stage(), 1)     # the 1 lets it take spare space
@@ -593,7 +610,7 @@ class MainWindow(QMainWindow):
 
     def _build_stage(self) -> QFrame:
         """Build the big picture area: the drop target, preview and video player."""
-        frame = QFrame(objectName="stage")
+        frame = _named(QFrame(), "stage")
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(1, 1, 1, 1)
 
@@ -611,7 +628,7 @@ class MainWindow(QMainWindow):
         # to play the sound. Both must be attached to the player.
         self.video = QVideoWidget()
         self.video.setStyleSheet("background: #06070c;")
-        self.player = QMediaPlayer(self)
+        self.player: QMediaPlayer = QMediaPlayer(self)
         self.audio_out = QAudioOutput(self)
         self.player.setAudioOutput(self.audio_out)
         self.player.setVideoOutput(self.video)
@@ -624,7 +641,7 @@ class MainWindow(QMainWindow):
         # A second player, for the preview's sound only. It has no video
         # output: the picture comes from the canvas, and this supplies the
         # sound and the clock that keeps the two together.
-        self.preview_player = QMediaPlayer(self)
+        self.preview_player: QMediaPlayer = QMediaPlayer(self)
         self.preview_audio_out = QAudioOutput(self)
         self.preview_player.setAudioOutput(self.preview_audio_out)
         self.preview_player.mediaStatusChanged.connect(self._on_preview_media_status)
@@ -652,8 +669,8 @@ class MainWindow(QMainWindow):
         headline.setStyleSheet("color: #b9c2d6; font-size: 15px;")
         layout.addWidget(headline)
 
-        hint = QLabel("or use Open MIDI file below   ·   .mid and .midi",
-                      objectName="subtitle")
+        hint = _named(QLabel("or use Open MIDI file below   ·   .mid and .midi"),
+                      "subtitle")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
         return page
@@ -665,7 +682,7 @@ class MainWindow(QMainWindow):
 
         self.play_icon = _transport_icon("play")
         self.pause_icon = _transport_icon("pause")
-        self.play_btn = QPushButton(objectName="transport")
+        self.play_btn: QPushButton = _named(QPushButton(), "transport")
         self.play_btn.setIcon(self.play_icon)
         self.play_btn.setIconSize(QSize(30, 30))
         self.play_btn.clicked.connect(self._toggle_play)
@@ -680,7 +697,7 @@ class MainWindow(QMainWindow):
         self.slider.sliderReleased.connect(self._on_scrub_end)
         row.addWidget(self.slider, 1)
 
-        self.time_label = QLabel("0:00 / 0:00", objectName="time")
+        self.time_label = _named(QLabel("0:00 / 0:00"), "time")
         self.time_label.setMinimumWidth(84)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight |
                                      Qt.AlignmentFlag.AlignVCenter)
@@ -692,8 +709,7 @@ class MainWindow(QMainWindow):
         speaker.setToolTip(VOLUME_HINT)
         row.addWidget(speaker)
 
-        self.volume_slider = SeekSlider(Qt.Orientation.Horizontal,
-                                        objectName="volume")
+        self.volume_slider = _named(SeekSlider(Qt.Orientation.Horizontal), "volume")
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(DEFAULT_VOLUME)
         self.volume_slider.setFixedWidth(94)
@@ -702,7 +718,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self.volume_slider)
 
         # Only useful once a video exists, so it starts hidden.
-        self.view_btn = QPushButton("Back to preview", objectName="ghost")
+        self.view_btn: QPushButton = _named(QPushButton("Back to preview"), "ghost")
         self.view_btn.clicked.connect(self._toggle_view)
         self.view_btn.hide()
         row.addWidget(self.view_btn)
@@ -712,10 +728,10 @@ class MainWindow(QMainWindow):
         """Build the Open button and the description of the loaded file."""
         row = QHBoxLayout()
         row.setSpacing(12)
-        self.open_btn = QPushButton("Open MIDI file…")
+        self.open_btn: QPushButton = QPushButton("Open MIDI file…")
         self.open_btn.clicked.connect(self.open_file)
         row.addWidget(self.open_btn)
-        self.file_label = QLabel("No file selected", objectName="fileinfo")
+        self.file_label = _named(QLabel("No file selected"), "fileinfo")
         row.addWidget(self.file_label, 1)
         return row
 
@@ -724,31 +740,31 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.setSpacing(8)
 
-        self.res_box = QComboBox()
+        self.res_box: QComboBox = QComboBox()
         self.res_box.addItems(list(RESOLUTIONS))
         self.res_box.setCurrentText("1080p")
-        self.fps_box = QComboBox()
+        self.fps_box: QComboBox = QComboBox()
         self.fps_box.addItems(["24 fps", "30 fps", "60 fps"])
         self.fps_box.setCurrentText("30 fps")
-        self.quality_box = QComboBox()
+        self.quality_box: QComboBox = QComboBox()
         self.quality_box.addItems(["high", "balanced", "fast"])
 
         for caption, widget in (("Size", self.res_box),
                                 ("Frame rate", self.fps_box),
                                 ("Quality", self.quality_box)):
-            row.addWidget(QLabel(caption, objectName="subtitle"))
+            row.addWidget(_named(QLabel(caption), "subtitle"))
             row.addWidget(widget)
             row.addSpacing(6)
             # Changing a setting once a video exists rebuilds it straight away.
             widget.currentIndexChanged.connect(self._on_setting_changed)
         row.addStretch(1)      # push the buttons to the right
 
-        self.cancel_btn = QPushButton("Cancel", objectName="ghost")
+        self.cancel_btn: QPushButton = _named(QPushButton("Cancel"), "ghost")
         self.cancel_btn.clicked.connect(self._cancel_render)
         self.cancel_btn.hide()
         row.addWidget(self.cancel_btn)
 
-        self.render_btn = QPushButton("Save video", objectName="primary")
+        self.render_btn: QPushButton = _named(QPushButton("Save video"), "primary")
         self.render_btn.clicked.connect(self.create_video)
         self.render_btn.setEnabled(False)     # nothing to render yet
         row.addWidget(self.render_btn)
@@ -763,7 +779,7 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.progress.hide()
         row.addWidget(self.progress, 1)
-        self.status = QLabel("", objectName="status")
+        self.status = _named(QLabel(), "status")
         self.status.setMinimumWidth(190)
         row.addWidget(self.status)
         return row
@@ -821,11 +837,9 @@ class MainWindow(QMainWindow):
         """
         self._stop_play()
 
-        # Reading and preparing can take a moment, so show a busy cursor. The
-        # error is stored rather than reported here, so that the cursor is back
-        # to normal before any dialog appears.
+        # Reading and preparing can take a moment, so show a busy cursor. On a
+        # failure it goes back to normal before the dialog appears, not after.
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        error: Exception | None = None
         try:
             score = parse_midi(path)
             if score.note_count == 0:
@@ -833,16 +847,13 @@ class MainWindow(QMainWindow):
             data = VisualData(score, fps=PREVIEW_FPS)
             renderer = FrameRenderer(data, PREVIEW_W, PREVIEW_H)
         except Exception as exc:
-            error = exc
-        finally:
             QApplication.restoreOverrideCursor()
-
-        if error is not None:
             QMessageBox.warning(
                 self, "Could not read file",
                 f"{os.path.basename(path)} could not be loaded.\n\n"
-                f"{type(error).__name__}: {error}")
+                f"{type(exc).__name__}: {exc}")
             return
+        QApplication.restoreOverrideCursor()
 
         self.midi_path = path
         self.score = score
@@ -959,14 +970,15 @@ class MainWindow(QMainWindow):
 
         Loudness is not heard in a straight line: halfway along the slider
         should sound like half as loud, which is not the same as half the
-        signal level. Qt's converter does that translation for us.
+        signal level. The logarithmic curve below makes that translation. It is
+        the one Qt's ``QAudio.convertVolume`` applies, written out here because
+        PyQt's type stubs declare that function incorrectly.
 
         This changes nothing about a saved video. That file's audio is
         synthesized separately by the pipeline and always written at full level.
         """
-        linear = QAudio.convertVolume(value / 100.0,
-                                      QAudio.VolumeScale.LogarithmicVolumeScale,
-                                      QAudio.VolumeScale.LinearVolumeScale)
+        fraction = value / 100.0
+        linear = 1.0 if fraction > 0.99 else -math.log(1.0 - fraction) / math.log(100.0)
         self.audio_out.setVolume(linear)
         self.preview_audio_out.setVolume(linear)
 

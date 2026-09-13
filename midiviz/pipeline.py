@@ -30,7 +30,7 @@ RESOLUTIONS = {
 }
 
 #: What share of the progress bar each step is worth, so that it advances at a
-#: roughly even pace. Measured on a 38 second piece: reading and planning take
+#: roughly even pace. Measured on a 38-second piece: reading and planning take
 #: under a tenth of a second, synthesizing the audio 1.5-1.7 seconds, and
 #: painting and encoding the frames 14 seconds at 720p through 36 seconds at
 #: 1080p. Encoding dominates, and the more so the larger the frames, so the

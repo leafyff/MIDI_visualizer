@@ -34,17 +34,17 @@ import numpy as np
 
 from .midi_parser import Score
 
-#: Audio samples per second. 44100 is CD quality.
+# Audio samples per second. 44100 is CD quality.
 SAMPLE_RATE = 44100
 
-#: Samples in one cycle of a wavetable. A power of two keeps the maths tidy.
+# Samples in one cycle of a wavetable. A power of two keeps the maths tidy.
 TABLE_SIZE = 2048
 
-#: How many octave-sized wavetables to build (MIDI pitches 0-127 span 11).
+# How many octave-sized wavetables to build (MIDI pitches 0-127 span 11).
 OCTAVES = 11
 
-#: Frequencies above this would alias, so no harmonic is allowed past it.
-#: Slightly under the true Nyquist limit to leave a little headroom.
+# Frequencies above this would alias, so no harmonic is allowed past it.
+# Slightly under the true Nyquist limit to leave a little headroom.
 MAX_FREQUENCY = SAMPLE_RATE * 0.45
 
 
@@ -118,7 +118,7 @@ def _harmonic_amplitude(spectrum: str, h: int) -> float:
     return 1.0 / h
 
 
-#: One tone per instrument family. Family names come from ``gm.family_of()``.
+# One tone per instrument family. Family names come from ``gm.family_of()``.
 FAMILY_TIMBRE: dict[str, Timbre] = {
     #                attack decay sustain release gain voices detune spectrum
     "piano":      Timbre(0.004, 1.10, 0.18, 0.28, 0.95, 1, 0.0, "piano"),
@@ -344,8 +344,28 @@ def _decay_curve(duration: float, rate: float) -> np.ndarray:
     return env
 
 
+class Layer:
+    """One ingredient of a drum sound. A drum mixes several layers together.
+
+    There are two kinds, :class:`Noise` and :class:`Body`. Each starts ``delay``
+    seconds into the drum, lasts ``duration`` seconds, and makes its sound
+    with :meth:`render`.
+    """
+
+    duration: float
+    delay: float
+
+    def render(self, rng: np.random.Generator) -> np.ndarray:
+        """Produce this layer's waveform, taking any randomness it needs from ``rng``.
+
+        Every kind of layer accepts ``rng``, whether it uses it or not, so a
+        drum can render all of its layers the same way.
+        """
+        raise NotImplementedError
+
+
 @dataclass(frozen=True)
-class Noise:
+class Noise(Layer):
     """A burst of filtered noise -- the *sizzle* of a drum.
 
     Real noise is shaped here in the frequency domain: we give every frequency
@@ -385,7 +405,7 @@ class Noise:
 
 
 @dataclass(frozen=True)
-class Body:
+class Body(Layer):
     """A sine whose pitch slides downwards -- the *thump* of a drum.
 
     Hitting a drum stretches its skin, so it starts sharp and settles to its
@@ -402,7 +422,7 @@ class Body:
     delay: float = 0.0
 
     def render(self, rng: np.random.Generator) -> np.ndarray:
-        """Produce this layer's waveform. ``rng`` is unused but keeps the API uniform."""
+        """Produce this layer's waveform. A sine needs nothing from ``rng``."""
         n = max(1, int(self.duration * SAMPLE_RATE))
         t = np.arange(n, dtype=np.float64) / SAMPLE_RATE
         freq = self.end_freq + (self.start_freq - self.end_freq) * np.exp(-self.sweep * t)
@@ -412,13 +432,13 @@ class Body:
                 * self.level).astype(np.float32)
 
 
-def _tom(base_freq: float) -> tuple:
+def _tom(base_freq: float) -> tuple[Layer, ...]:
     """Layers for a tom at the given pitch: a long body plus a short attack."""
     return (Body(base_freq * 1.7, base_freq, 0.42, decay=8.5, sweep=26.0),
             Noise(0.02, decay=160.0, tilt=0.3, lowcut=900, level=0.25))
 
 
-def _hand_drum(base_freq: float) -> tuple:
+def _hand_drum(base_freq: float) -> tuple[Layer, ...]:
     """Layers for a bongo or conga: like a tom, but tighter and struck by hand.
 
     The skin is smaller and under more tension than a tom's, so the note is
@@ -428,15 +448,15 @@ def _hand_drum(base_freq: float) -> tuple:
             Noise(0.015, decay=200.0, tilt=0.4, lowcut=1200, level=0.3))
 
 
-def _cymbal(duration: float) -> tuple:
+def _cymbal(duration: float) -> tuple[Layer, ...]:
     """Layers for a crash or splash: broad noise plus a brighter shimmer on top."""
     return (Noise(duration, decay=3.2, tilt=0.55, lowcut=2200, level=0.50),
             Noise(duration, decay=5.0, tilt=0.95, lowcut=7000, level=0.22))
 
 
-#: How each General MIDI drum is built, keyed by MIDI note number. Add a row to
-#: teach the synth a new drum; anything missing falls back to _generic_drum().
-DRUM_KIT: dict[int, tuple] = {
+# How each General MIDI drum is built, keyed by MIDI note number. Add a row to
+# teach the synth a new drum; anything missing falls back to _generic_drum().
+DRUM_KIT: dict[int, tuple[Layer, ...]] = {
     35: (Body(165, 46, 0.42, decay=9.0, sweep=32.0, level=1.15),        # bass drum
          Noise(0.012, decay=260.0, tilt=0.4, lowcut=600, level=0.40)),
     37: (Noise(0.05, decay=80.0, tilt=0.5, lowcut=900),                 # side stick
@@ -476,15 +496,15 @@ DRUM_KIT.update({note: (Noise(0.1, decay=48.0, tilt=1.0,     # shakers and guiro
                  for note in (69, 70, 73, 74)})
 
 
-def _generic_drum(note: int) -> tuple:
+def _generic_drum(note: int) -> tuple[Layer, ...]:
     """A plausible stand-in for any percussion note not listed in :data:`DRUM_KIT`."""
     freq = midi_to_freq(note) * 2.0
     return (Body(freq, freq * 0.8, 0.18, decay=22.0, sweep=30.0, level=0.5),
             Noise(0.03, decay=90.0, tilt=0.5, lowcut=1500, level=0.35))
 
 
-#: Finished drum sounds, built on first use. Drums repeat far more than any
-#: other note, so caching them matters most.
+# Finished drum sounds, built on first use. Drums repeat far more than any
+# other note, so caching them matters most.
 _DRUM_CACHE: dict[int, np.ndarray] = {}
 
 

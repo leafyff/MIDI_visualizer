@@ -122,8 +122,8 @@ class Score:
         """
         pitches = [n.pitch for t in self.tracks for n in t.notes]
         if not pitches:
-            return (36, 84)
-        return (min(pitches), max(pitches))
+            return 36, 84
+        return min(pitches), max(pitches)
 
 
 class _TempoMap:
@@ -286,9 +286,9 @@ def _collect_groups(per_track, ticks_per_beat: int) -> dict[tuple[int, int], _Gr
         # the first one is released; the oldest is released first.
         pending: dict[tuple[int, int], list[tuple[int, int]]] = {}
 
-        def group_for(channel: int) -> _Group:
+        def group_for(channel_: int) -> _Group:
             """Fetch (or create) the group for this track and channel."""
-            return groups.setdefault((track_index, channel), _Group())
+            return groups.setdefault((track_index, channel_), _Group())
 
         for tick, msg in messages:
             if msg.type == "track_name":

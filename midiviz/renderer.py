@@ -319,7 +319,7 @@ class VisualData:
             self.tracks[:, i] = 1.0 - np.exp(-column / max(reference, 0.25) * 1.1)
 
         self.global_energy = self.bars.mean(axis=1)
-        loud = np.percentile(self.global_energy, 92)
+        loud = float(np.percentile(self.global_energy, 92))
         self.global_energy = np.clip(self.global_energy / max(loud, 1e-3), 0.0, 1.4)
 
     # -- step 4: make the bars fall rather than snap -----------------------
@@ -381,7 +381,7 @@ class VisualData:
         strengths = [1.0 if round(t, 4) in downbeats else 0.55 for t in beats]
 
         for frame in range(self.n_frames):
-            now = self.times[frame]
+            now = float(self.times[frame])
             # The most recent beat at or before this frame.
             i = bisect.bisect_right(beats, now) - 1
             if i >= 0:
